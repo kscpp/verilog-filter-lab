@@ -1,0 +1,50 @@
+3 Specifica funzionale del filtro
+
+Il circuito è un filtro a media mobile su otto campioni signed
+a 16 bit. A ogni ingresso valido aggiorna la finestra e
+produce la media intera degli ultimi otto campioni. Le
+posizioni inizialmente non riempite valgono zero. Il divisore
+resta otto anche durante l’avvio.
+
+Formula: y[k] = floor((x[k] + x[k−1] + ... + x[k−7]) / 8).
+
+I campioni precedenti al reset valgono zero. L’arrotondamento
+è verso meno infinito: −1 diviso 8 produce −1, non zero. Per
+un campionamento uniforme a 1 kHz, il ritardo di gruppo del
+filtro lineare ideale è 3,5 ms; le pause di valid non
+rappresentano nuovi campioni.
+
+Interfaccia obbligatoria, da riportare integralmente nel prompt:
+
+module moving_average_8 (
+    input wire clk,
+    input wire rst,
+    input wire in_valid,
+    input wire signed [15:0] x_in,
+    output reg out_valid,
+    output reg signed [15:0] y_out
+);
+// Corpo da generare con Groq
+endmodule
+
+Al fronte di salita, rst ha priorità. Con rst=1 si azzerano
+memoria, stato, y_out e out_valid. Con rst=0 e in_valid=1 si
+acquisisce x_in e si registra la media che include il nuovo
+campione; out_valid diventa 1. Con in_valid=0 stato e
+y_out restano invariati e out_valid diventa 0. Le uscite sono
+osservate dopo gli aggiornamenti dei registri, senza un
+ulteriore ciclo di latenza.
+
+Il DUT deve essere Verilog-2005 sintetizzabile, con un solo
+modulo, senza IP esterne, include, inizializzazioni initial,
+ritardi #, operazioni su file, chiamate di sistema, clock
+derivati o latch. Il testbench fornito può invece utilizzare
+ritardi e operazioni su file. Non applicare al testbench le
+restrizioni del DUT.
+
+Architettura suggerita al modello: buffer circolare di otto
+campioni, indice a tre bit e somma signed a 19 bit.
+La somma varia tra −262144 e 262136. Estendere esplicitamente
+il segno degli operandi prima di sottrarre il campione
+vecchio e aggiungere quello nuovo. Lo shift finale deve
+essere aritmetico.

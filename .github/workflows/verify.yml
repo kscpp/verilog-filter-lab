@@ -1,0 +1,84 @@
+name: Verifica filtro
+
+run-name: verify-${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        required: true
+        type: string
+      commit_sha:
+        required: true
+        type: string
+      sha256:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    env:
+      REQUEST_ID: ${{ inputs.request_id }}
+      COMMIT_SHA: ${{ inputs.commit_sha }}
+      RTL_HASH: ${{ inputs.sha256 }}
+
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          [[ "$REQUEST_ID" =~ ^[0-9a-f]{32}$ ]]
+          [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RTL_HASH" =~ ^[0-9a-f]{64}$ ]]
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+
+      - name: Prepare candidate
+        shell: bash
+        run: |
+          mkdir -p input results
+          source="submissions/$REQUEST_ID/dut.v"
+          test -f "$source"
+          test ! -L "$source"
+          test "$(stat -c%s "$source")" -le 262144
+          cp "$source" input/dut.v
+          printf '%s input/dut.v\n' "$RTL_HASH" | sha256sum -c -
+          cp tb/tb_filter.v input/tb_filter.v
+          cp infra/verify.sh input/verify.sh
+          printf '{"request_id":"%s",' "$REQUEST_ID" > results/request.json
+          printf '"commit_sha":"%s",' "$COMMIT_SHA" >> results/request.json
+          printf '"sha256":"%s"}\n' "$RTL_HASH" >> results/request.json
+
+      - name: Build verification image
+        run: docker build -t rtl-check -f infra/Dockerfile .
+
+      - name: Verify candidate
+        shell: bash
+        run: |
+          set -o pipefail
+          docker run --rm --network none --read-only \
+            --cap-drop ALL --security-opt no-new-privileges \
+            --memory 2g --cpus 2 --pids-limit 128 \
+            --user "$(id -u):$(id -g)" \
+            --tmpfs /tmp:rw,nosuid,size=256m,mode=1777 \
+            -v "$PWD/input:/src:ro" \
+            -v "$PWD/results:/out:rw" \
+            -w /out rtl-check bash /src/verify.sh \
+            2>&1 | tee results/executor.log
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ inputs.request_id }}
+          path: results/
+          retention-days: 7
+          if-no-files-found: warn
